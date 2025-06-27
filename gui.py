@@ -357,42 +357,164 @@ class MainWindow(QMainWindow):
     def show_add_zone_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("Add New No-Fly Zone")
-        layout = QFormLayout()
+        dialog.setMinimumWidth(500)
+        dialog.setMinimumHeight(350)
+        
+        layout = QVBoxLayout()
+        
+        # Zone Information Group
+        info_group = QGroupBox("Zone Information")
+        info_layout = QFormLayout()
         
         id_input = QLineEdit()
+        id_input.setPlaceholderText("Enter unique zone ID (e.g., airport_zone_1)")
+        
+        info_layout.addRow("Zone ID:", id_input)
+        info_group.setLayout(info_layout)
+        
+        # Coordinates Group
+        coords_group = QGroupBox("Zone Coordinates")
+        coords_layout = QVBoxLayout()
+        
+        # Instructions label
+        instructions = QLabel(
+            "Enter coordinates for the no-fly zone polygon:\n"
+            "• Format: x1,y1;x2,y2;x3,y3;x4,y4\n"
+            "• Coordinates should be between 0-100\n"
+            "• At least 3 points required\n"
+            "• Points will be connected in order\n"
+            "• Zone will be permanently active"
+        )
+        instructions.setStyleSheet("QLabel { color: #666; font-size: 10px; }")
+        
         coords_input = QLineEdit()
-        coords_input.setPlaceholderText("Format: x1,y1;x2,y2;x3,y3;x4,y4")
+        coords_input.setPlaceholderText("Example: 20,20;40,20;40,40;20,40")
         
-        layout.addRow("ID:", id_input)
-        layout.addRow("Coordinates:", coords_input)
+        # Preset buttons for common shapes
+        preset_layout = QHBoxLayout()
+        square_btn = QPushButton("Square (20x20)")
+        rectangle_btn = QPushButton("Rectangle (30x20)")
+        triangle_btn = QPushButton("Triangle")
         
+        square_btn.clicked.connect(lambda: coords_input.setText("25,25;45,25;45,45;25,45"))
+        rectangle_btn.clicked.connect(lambda: coords_input.setText("20,30;50,30;50,50;20,50"))
+        triangle_btn.clicked.connect(lambda: coords_input.setText("40,20;60,40;20,40"))
+        
+        preset_layout.addWidget(square_btn)
+        preset_layout.addWidget(rectangle_btn)
+        preset_layout.addWidget(triangle_btn)
+        
+        coords_layout.addWidget(instructions)
+        coords_layout.addWidget(coords_input)
+        coords_layout.addLayout(preset_layout)
+        coords_group.setLayout(coords_layout)
+        
+        # Preview button
+        preview_btn = QPushButton("Preview Zone")
+        preview_btn.clicked.connect(lambda: self.preview_zone(coords_input.text()))
+        
+        # Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
             Qt.Horizontal, dialog)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
-        layout.addRow(buttons)
+        
+        # Add all groups to main layout
+        layout.addWidget(info_group)
+        layout.addWidget(coords_group)
+        layout.addWidget(preview_btn)
+        layout.addWidget(buttons)
         
         dialog.setLayout(layout)
         
         if dialog.exec_() == QDialog.Accepted:
             try:
+                # Validate ID
+                zone_id = id_input.text().strip()
+                if not zone_id:
+                    QMessageBox.warning(self, "Error", "Please enter a zone ID")
+                    return
+                
+                # Check if ID already exists
+                existing_ids = [zone.id for zone in self.system.no_fly_zones]
+                if zone_id in existing_ids:
+                    QMessageBox.warning(self, "Error", f"Zone ID '{zone_id}' already exists. Please use a different ID.")
+                    return
+                
+                # Parse coordinates
+                coords_text = coords_input.text().strip()
+                if not coords_text:
+                    QMessageBox.warning(self, "Error", "Please enter coordinates")
+                    return
+                
                 coords = []
-                for point in coords_input.text().split(';'):
+                for point in coords_text.split(';'):
                     x, y = map(float, point.split(','))
+                    if not (0 <= x <= 100 and 0 <= y <= 100):
+                        QMessageBox.warning(self, "Error", f"Coordinates must be between 0-100. Invalid point: ({x}, {y})")
+                        return
                     coords.append((x, y))
                 
+                if len(coords) < 3:
+                    QMessageBox.warning(self, "Error", "At least 3 coordinate points are required")
+                    return
+                
+                # Set permanent active time (always active)
                 current_time = datetime.now()
+                start_time = current_time
+                end_time = current_time + timedelta(days=365)  # Active for 1 year
+                
+                # Create zone
                 zone = NoFlyZone(
-                    id_input.text(),
+                    zone_id,
                     coords,
-                    current_time,
-                    current_time + timedelta(hours=2)
+                    start_time,
+                    end_time
                 )
+                
                 self.system.add_no_fly_zone(zone)
                 self.update_visualization()
-            except:
-                QMessageBox.warning(self, "Error", "Invalid coordinates format")
+                
+                # Show success message
+                QMessageBox.information(
+                    self, 
+                    "Success", 
+                    f"No-fly zone '{zone_id}' added successfully!\n"
+                    f"Zone is now permanently active with {len(coords)} coordinate points."
+                )
+                
+            except ValueError as e:
+                QMessageBox.warning(self, "Error", f"Invalid coordinates format: {str(e)}\nPlease use format: x1,y1;x2,y2;x3,y3")
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to create zone: {str(e)}")
+    
+    def preview_zone(self, coords_text):
+        """Preview the zone coordinates before creating"""
+        try:
+            if not coords_text.strip():
+                QMessageBox.information(self, "Preview", "Please enter coordinates first")
+                return
+            
+            coords = []
+            for point in coords_text.split(';'):
+                x, y = map(float, point.split(','))
+                coords.append((x, y))
+            
+            if len(coords) < 3:
+                QMessageBox.warning(self, "Preview", "At least 3 coordinate points are required")
+                return
+            
+            # Show preview info
+            coord_info = "\n".join([f"Point {i+1}: ({x}, {y})" for i, (x, y) in enumerate(coords)])
+            QMessageBox.information(
+                self, 
+                "Zone Preview", 
+                f"Zone will have {len(coords)} points:\n\n{coord_info}\n\nClick OK in the main dialog to create the zone."
+            )
+            
+        except Exception as e:
+            QMessageBox.warning(self, "Preview Error", f"Invalid coordinates: {str(e)}")
                 
     def optimize_deliveries(self):
         # Show loading dialog
