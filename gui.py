@@ -18,7 +18,7 @@ from drone import Drone
 from delivery import Delivery
 from zone import NoFlyZone
 from routing import AStarRouter
-from optimizer import DeliveryOptimizer, GeneticOptimizer
+from optimizer import DeliveryOptimizer, GeneticOptimizer, DataManager
 from main import DroneDeliverySystem
 
 class MapCanvas(FigureCanvas):
@@ -183,10 +183,47 @@ class MainWindow(QMainWindow):
         load_sample_btn = QPushButton("Load Sample Data")
         load_sample_btn.clicked.connect(self.load_sample_data)
         
+        # Add individual remove buttons - standart stil
+        remove_drone_btn = QPushButton("Remove Drone")
+        remove_drone_btn.clicked.connect(self.show_remove_drone_dialog)
+        
+        remove_delivery_btn = QPushButton("Remove Delivery")
+        remove_delivery_btn.clicked.connect(self.show_remove_delivery_dialog)
+        
+        remove_zone_btn = QPushButton("Remove No-Fly Zone")
+        remove_zone_btn.clicked.connect(self.show_remove_zone_dialog)
+        
+        # Add reset and clear buttons - standart stil
+        reset_data_btn = QPushButton("Reset All Data")
+        reset_data_btn.clicked.connect(self.reset_all_data)
+        
+        clear_data_btn = QPushButton("Clear All Data")
+        clear_data_btn.clicked.connect(self.clear_all_data)
+        
+        # Add show status button - standart stil
+        show_status_btn = QPushButton("Show Status")
+        show_status_btn.clicked.connect(self.show_system_status)
+        
         left_layout.addWidget(add_drone_btn)
         left_layout.addWidget(add_delivery_btn)
         left_layout.addWidget(add_zone_btn)
         left_layout.addWidget(load_sample_btn)
+        
+        # Add individual remove buttons
+        left_layout.addWidget(remove_drone_btn)
+        left_layout.addWidget(remove_delivery_btn)
+        left_layout.addWidget(remove_zone_btn)
+        
+        # Add separator
+        separator = QLabel("─" * 20)
+        separator.setAlignment(Qt.AlignCenter)
+        separator.setStyleSheet("color: #888888; font-size: 10px;")
+        left_layout.addWidget(separator)
+        
+        # Add reset and clear buttons
+        left_layout.addWidget(reset_data_btn)
+        left_layout.addWidget(clear_data_btn)
+        left_layout.addWidget(show_status_btn)
         
         # Add optimization controls
         optimize_group = QGroupBox("Optimization")
@@ -374,8 +411,14 @@ class MainWindow(QMainWindow):
     def on_optimization_finished(self, assignment):
         self.system.execute_deliveries(assignment)
         self.update_visualization()
+        # Başarılı teslimat sayısı çok azsa veya hiç yoksa kullanıcıya uyarı göster
+        completed = sum(1 for d in self.system.deliveries if d.status == "completed")
+        total = len(self.system.deliveries)
+        if completed < total // 3:  # Teslimatların üçte birinden azı başarılıysa uyarı ver
+            QMessageBox.warning(self, "Optimizasyon Uyarısı", "Optimizasyonun büyük kısmı başarısız oldu.\nCSP algoritması karmaşık veriyle yavaş kalabilir.\nDaha hızlı sonuç için Greedy veya Genetic Algorithm seçebilirsiniz.")
+        # Optimize dialogu açıkken, optimizasyon tamamlandığında mutlaka kapat
         if self.optimizing_dialog:
-            self.optimizing_dialog.close()
+            self.optimizing_dialog.done(0)
             self.optimizing_dialog = None
         self.optimizer_thread = None
         
@@ -489,6 +532,432 @@ class MainWindow(QMainWindow):
         # Update visualization
         self.update_visualization()
         QMessageBox.information(self, "Success", "Sample data loaded successfully!")
+    
+    def reset_all_data(self):
+        """Tüm verileri başlangıç durumuna sıfırla"""
+        reply = QMessageBox.question(
+            self, 
+            "Reset All Data", 
+            "Bu işlem tüm drone'ları, delivery'leri ve atamalarını başlangıç durumuna sıfırlayacak.\n"
+            "Optimizasyon sonuçları kaybolacak. Devam etmek istiyor musunuz?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            try:
+                # System içindeki verileri sıfırla
+                if hasattr(self.system, 'optimizer') and self.system.optimizer:
+                    self.system.optimizer.reset_all_data()
+                    QMessageBox.information(self, "Success", "Tüm veriler başlangıç durumuna sıfırlandı!")
+                else:
+                    # Manuel sıfırlama
+                    from optimizer import DataManager
+                    DataManager.reset_drones(self.system.drones)
+                    DataManager.reset_deliveries(self.system.deliveries)
+                    QMessageBox.information(self, "Success", "Tüm veriler başlangıç durumuna sıfırlandı!")
+                
+                # Görselleştirmeyi güncelle
+                self.update_visualization()
+                
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Sıfırlama sırasında hata oluştu:\n{str(e)}")
+    
+    def clear_all_data(self):
+        """Tüm verileri tamamen temizle"""
+        reply = QMessageBox.question(
+            self, 
+            "Clear All Data", 
+            "⚠️ DİKKAT ⚠️\n\n"
+            "Bu işlem TÜM verileri kalıcı olarak silecek:\n"
+            "• Tüm drone'lar\n"
+            "• Tüm delivery'ler\n"
+            "• Tüm no-fly zone'lar\n"
+            "• Tüm optimizasyon sonuçları\n\n"
+            "Bu işlem GERİ ALINAMAZ!\n"
+            "Devam etmek istiyor musunuz?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            # İkinci onay
+            confirm = QMessageBox.question(
+                self,
+                "Final Confirmation",
+                "Son onay: Tüm verileri silmek istediğinizden emin misiniz?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if confirm == QMessageBox.Yes:
+                try:
+                    # Tüm verileri temizle
+                    self.system.drones.clear()
+                    self.system.deliveries.clear()
+                    self.system.no_fly_zones.clear()
+                    
+                    # Optimizer varsa onu da temizle
+                    if hasattr(self.system, 'optimizer'):
+                        self.system.optimizer = None
+                    
+                    # Görselleştirmeyi güncelle
+                    self.update_visualization()
+                    
+                    QMessageBox.information(self, "Success", "Tüm veriler temizlendi!")
+                    
+                except Exception as e:
+                    QMessageBox.critical(self, "Error", f"Temizleme sırasında hata oluştu:\n{str(e)}")
+    
+    def show_system_status(self):
+        """Sistem durumunu göster"""
+        try:
+            from optimizer import DataManager
+            
+            # Durumu al
+            summary = DataManager.get_status_summary(
+                self.system.drones, 
+                self.system.deliveries, 
+                self.system.no_fly_zones
+            )
+            
+            # Detaylı bilgi hazırla
+            status_text = "🤖 DRONE DELIVERY SYSTEM STATUS 🚁\n\n"
+            status_text += "=" * 50 + "\n"
+            status_text += f"📊 GENEL BİLGİLER\n"
+            status_text += f"Toplam Drone: {summary['total_drones']}\n"
+            status_text += f"Toplam Delivery: {summary['total_deliveries']}\n"
+            status_text += f"Toplam No-Fly Zone: {summary['total_no_fly_zones']}\n\n"
+            
+            if summary['drone_statuses']:
+                status_text += f"🚁 DRONE DURUMLARI\n"
+                for status, count in summary['drone_statuses'].items():
+                    emoji = "✅" if status == "available" else "🔄" if status == "busy" else "⚠️"
+                    status_text += f"{emoji} {status.title()}: {count}\n"
+                status_text += "\n"
+            
+            if summary['delivery_statuses']:
+                status_text += f"📦 DELIVERY DURUMLARI\n"
+                for status, count in summary['delivery_statuses'].items():
+                    emoji = "⏳" if status == "pending" else "✅" if status == "completed" else "❌" if status == "failed" else "🔄"
+                    status_text += f"{emoji} {status.title()}: {count}\n"
+                status_text += "\n"
+            
+            # Detaylı drone bilgileri
+            if self.system.drones:
+                status_text += f"🔧 DETAYLI DRONE BİLGİLERİ\n"
+                for drone in self.system.drones:
+                    battery_emoji = "🔋" if drone.current_battery > 50 else "🪫" if drone.current_battery > 20 else "⚡"
+                    status_text += f"{battery_emoji} {drone.id}: "
+                    status_text += f"Pos({drone.current_position[0]:.1f},{drone.current_position[1]:.1f}) "
+                    status_text += f"Battery:{drone.current_battery:.1f}% "
+                    status_text += f"Load:{drone.max_weight}kg\n"
+                status_text += "\n"
+            
+            # Optimizasyon durumu
+            if hasattr(self.system, 'optimizer') and self.system.optimizer:
+                status_text += f"⚙️ OPTİMİZASYON DURUMU\n"
+                status_text += f"✅ Optimizer aktif\n"
+                if hasattr(self.system.optimizer, 'assignment'):
+                    total_assignments = sum(len(deliveries) for deliveries in self.system.optimizer.assignment.values())
+                    status_text += f"📋 Toplam atama: {total_assignments}\n"
+            else:
+                status_text += f"⚙️ OPTİMİZASYON DURUMU\n"
+                status_text += f"❌ Optimizer henüz çalıştırılmadı\n"
+            
+            status_text += "\n" + "=" * 50
+            
+            # Mesaj kutusunda göster
+            msg = QMessageBox(self)
+            msg.setWindowTitle("System Status")
+            msg.setText(status_text)
+            msg.setIcon(QMessageBox.Information)
+            msg.setStandardButtons(QMessageBox.Ok)
+            
+            # Mesaj kutusunu büyüt
+            msg.setStyleSheet("""
+                QMessageBox {
+                    font-family: 'Courier New', monospace;
+                    font-size: 10px;
+                }
+                QMessageBox QLabel {
+                    min-width: 500px;
+                    max-width: 500px;
+                }
+            """)
+            
+            msg.exec_()
+            
+            # Konsola da yazdır
+            DataManager.print_status_summary(
+                self.system.drones, 
+                self.system.deliveries, 
+                self.system.no_fly_zones
+            )
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Durum gösterilirken hata oluştu:\n{str(e)}")
+    
+    def show_remove_drone_dialog(self):
+        """Drone seçip silme dialogu"""
+        if not self.system.drones:
+            QMessageBox.information(self, "Info", "Silinecek drone yok!")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Remove Drone")
+        dialog.setModal(True)
+        dialog.resize(400, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Açıklama
+        info_label = QLabel("Silmek istediğiniz drone'u seçin:")
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Drone listesi
+        drone_list = QTableWidget()
+        drone_list.setColumnCount(4)
+        drone_list.setHorizontalHeaderLabels(["ID", "Position", "Battery", "Max Weight"])
+        drone_list.setRowCount(len(self.system.drones))
+        drone_list.setSelectionBehavior(QTableWidget.SelectRows)
+        
+        for i, drone in enumerate(self.system.drones):
+            drone_list.setItem(i, 0, QTableWidgetItem(drone.id))
+            drone_list.setItem(i, 1, QTableWidgetItem(f"({drone.current_position[0]:.1f}, {drone.current_position[1]:.1f})"))
+            drone_list.setItem(i, 2, QTableWidgetItem(f"{drone.current_battery:.1f}%"))
+            drone_list.setItem(i, 3, QTableWidgetItem(f"{drone.max_weight:.1f}kg"))
+        
+        layout.addWidget(drone_list)
+        
+        # Butonlar - standart stil
+        button_layout = QHBoxLayout()
+        
+        remove_btn = QPushButton("Remove Selected")
+        cancel_btn = QPushButton("Cancel")
+        
+        def remove_selected():
+            selected_rows = drone_list.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(dialog, "Warning", "Lütfen silinecek drone'u seçin!")
+                return
+            
+            row = selected_rows[0].row()
+            drone = self.system.drones[row]
+            
+            reply = QMessageBox.question(
+                dialog,
+                "Confirm Remove",
+                f"'{drone.id}' drone'unu silmek istediğinizden emin misiniz?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    # System'den sil
+                    self.system.drones.remove(drone)
+                    
+                    # Optimizer varsa oradan da sil
+                    if hasattr(self.system, 'optimizer') and self.system.optimizer:
+                        self.system.optimizer.remove_drone(drone.id)
+                    
+                    # Görselleştirmeyi güncelle
+                    self.update_visualization()
+                    
+                    QMessageBox.information(dialog, "Success", f"Drone '{drone.id}' silindi!")
+                    dialog.accept()
+                    
+                except Exception as e:
+                    QMessageBox.critical(dialog, "Error", f"Drone silinirken hata oluştu:\n{str(e)}")
+        
+        remove_btn.clicked.connect(remove_selected)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addWidget(remove_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        dialog.exec_()
+    
+    def show_remove_delivery_dialog(self):
+        """Delivery seçip silme dialogu"""
+        if not self.system.deliveries:
+            QMessageBox.information(self, "Info", "Silinecek delivery yok!")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Remove Delivery")
+        dialog.setModal(True)
+        dialog.resize(500, 350)
+        
+        layout = QVBoxLayout()
+        
+        # Açıklama
+        info_label = QLabel("Silmek istediğiniz delivery'yi seçin:")
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Delivery listesi
+        delivery_list = QTableWidget()
+        delivery_list.setColumnCount(5)
+        delivery_list.setHorizontalHeaderLabels(["ID", "Position", "Weight", "Priority", "Status"])
+        delivery_list.setRowCount(len(self.system.deliveries))
+        delivery_list.setSelectionBehavior(QTableWidget.SelectRows)
+        
+        for i, delivery in enumerate(self.system.deliveries):
+            delivery_list.setItem(i, 0, QTableWidgetItem(delivery.id))
+            delivery_list.setItem(i, 1, QTableWidgetItem(f"({delivery.position[0]:.1f}, {delivery.position[1]:.1f})"))
+            delivery_list.setItem(i, 2, QTableWidgetItem(f"{delivery.weight:.1f}kg"))
+            delivery_list.setItem(i, 3, QTableWidgetItem(str(delivery.priority)))
+            status = getattr(delivery, 'status', 'pending')
+            delivery_list.setItem(i, 4, QTableWidgetItem(status))
+        
+        layout.addWidget(delivery_list)
+        
+        # Butonlar - standart stil
+        button_layout = QHBoxLayout()
+        
+        remove_btn = QPushButton("Remove Selected")
+        cancel_btn = QPushButton("Cancel")
+        
+        def remove_selected():
+            selected_rows = delivery_list.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(dialog, "Warning", "Lütfen silinecek delivery'yi seçin!")
+                return
+            
+            row = selected_rows[0].row()
+            delivery = self.system.deliveries[row]
+            
+            reply = QMessageBox.question(
+                dialog,
+                "Confirm Remove",
+                f"'{delivery.id}' delivery'sini silmek istediğinizden emin misiniz?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    # System'den sil
+                    self.system.deliveries.remove(delivery)
+                    
+                    # Optimizer varsa oradan da sil
+                    if hasattr(self.system, 'optimizer') and self.system.optimizer:
+                        self.system.optimizer.remove_delivery(delivery.id)
+                    
+                    # Görselleştirmeyi güncelle
+                    self.update_visualization()
+                    
+                    QMessageBox.information(dialog, "Success", f"Delivery '{delivery.id}' silindi!")
+                    dialog.accept()
+                    
+                except Exception as e:
+                    QMessageBox.critical(dialog, "Error", f"Delivery silinirken hata oluştu:\n{str(e)}")
+        
+        remove_btn.clicked.connect(remove_selected)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addWidget(remove_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        dialog.exec_()
+    
+    def show_remove_zone_dialog(self):
+        """No-fly zone seçip silme dialogu"""
+        if not self.system.no_fly_zones:
+            QMessageBox.information(self, "Info", "Silinecek no-fly zone yok!")
+            return
+        
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Remove No-Fly Zone")
+        dialog.setModal(True)
+        dialog.resize(400, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Açıklama
+        info_label = QLabel("Silmek istediğiniz no-fly zone'u seçin:")
+        info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(info_label)
+        
+        # Zone listesi
+        zone_list = QTableWidget()
+        zone_list.setColumnCount(3)
+        zone_list.setHorizontalHeaderLabels(["ID", "Coordinates", "Active Time"])
+        zone_list.setRowCount(len(self.system.no_fly_zones))
+        zone_list.setSelectionBehavior(QTableWidget.SelectRows)
+        
+        for i, zone in enumerate(self.system.no_fly_zones):
+            zone_list.setItem(i, 0, QTableWidgetItem(getattr(zone, 'id', f"Zone-{i+1}")))
+            
+            # Koordinatları kısalt
+            coords = str(zone.polygon_coordinates[:2]) + "..." if len(zone.polygon_coordinates) > 2 else str(zone.polygon_coordinates)
+            zone_list.setItem(i, 1, QTableWidgetItem(coords))
+            
+            # Aktif zamanı - doğru attribute isimlerini kullan
+            active_time = f"{zone.active_time_start.strftime('%H:%M')} - {zone.active_time_end.strftime('%H:%M')}"
+            zone_list.setItem(i, 2, QTableWidgetItem(active_time))
+        
+        layout.addWidget(zone_list)
+        
+        # Butonlar - standart stil
+        button_layout = QHBoxLayout()
+        
+        remove_btn = QPushButton("Remove Selected")
+        cancel_btn = QPushButton("Cancel")
+        
+        def remove_selected():
+            selected_rows = zone_list.selectionModel().selectedRows()
+            if not selected_rows:
+                QMessageBox.warning(dialog, "Warning", "Lütfen silinecek no-fly zone'u seçin!")
+                return
+            
+            row = selected_rows[0].row()
+            zone = self.system.no_fly_zones[row]
+            zone_id = getattr(zone, 'id', f"Zone-{row+1}")
+            
+            reply = QMessageBox.question(
+                dialog,
+                "Confirm Remove",
+                f"'{zone_id}' no-fly zone'unu silmek istediğinizden emin misiniz?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No
+            )
+            
+            if reply == QMessageBox.Yes:
+                try:
+                    # System'den sil
+                    self.system.no_fly_zones.remove(zone)
+                    
+                    # Optimizer varsa oradan da sil
+                    if hasattr(self.system, 'optimizer') and self.system.optimizer:
+                        if zone in self.system.optimizer.no_fly_zones:
+                            self.system.optimizer.no_fly_zones.remove(zone)
+                    
+                    # Görselleştirmeyi güncelle
+                    self.update_visualization()
+                    
+                    QMessageBox.information(dialog, "Success", f"No-fly zone '{zone_id}' silindi!")
+                    dialog.accept()
+                    
+                except Exception as e:
+                    QMessageBox.critical(dialog, "Error", f"No-fly zone silinirken hata oluştu:\n{str(e)}")
+        
+        remove_btn.clicked.connect(remove_selected)
+        cancel_btn.clicked.connect(dialog.reject)
+        
+        button_layout.addWidget(remove_btn)
+        button_layout.addWidget(cancel_btn)
+        layout.addLayout(button_layout)
+        
+        dialog.setLayout(layout)
+        dialog.exec_()
 
 def main():
     app = QApplication(sys.argv)
@@ -497,4 +966,4 @@ def main():
     sys.exit(app.exec_())
 
 if __name__ == '__main__':
-    main() 
+    main()

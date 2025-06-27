@@ -65,7 +65,7 @@ class DroneDeliverySystem:
     def add_no_fly_zone(self, zone: NoFlyZone):
         """Add a new no-fly zone."""
         self.no_fly_zones.append(zone)
-    
+
     def optimize_deliveries(self, use_genetic: bool = False, use_greedy: bool = False) -> Dict:
         """Optimize delivery assignments using either CSP, GA, or Greedy."""
         if use_greedy:
@@ -80,7 +80,12 @@ class DroneDeliverySystem:
                 assignment = optimizer.solve_greedy()
         else:
             optimizer = DeliveryOptimizer(self.drones, self.deliveries, self.no_fly_zones, self.current_time)
-            assignment = optimizer.solve_csp()
+            try:
+                assignment = optimizer.solve_csp(timeout_seconds=30.0)  # 30 saniye timeout
+            except Exception as e:
+                print(f"[CSP] Exception: {e}. Falling back to greedy.")
+                greedy_optimizer = GeneticOptimizer(self.drones, self.deliveries, self.no_fly_zones, self.current_time)
+                assignment = greedy_optimizer.solve_greedy()
         return assignment
     
     def execute_deliveries(self, assignment: Dict[str, List[Delivery]]):
@@ -178,4 +183,4 @@ def main():
         visualizer.show()
 
 if __name__ == "__main__":
-    main() 
+    main()
